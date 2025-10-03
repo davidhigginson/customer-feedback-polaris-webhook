@@ -77,13 +77,14 @@ app.get('/', async (req, res) => {
   if (!code) {
     return res.json({
       message: 'Customer Feedback to Polaris Webhook Service',
-      version: '1.0.0',
+      version: '1.0.1',
       endpoints: {
         webhook: '/webhook/feedback',
         health: '/health',
         auth: '/auth/setup'
       },
-      status: 'running'
+      status: 'running',
+      oauthCallback: 'Ready to receive authorization codes'
     });
   }
   
