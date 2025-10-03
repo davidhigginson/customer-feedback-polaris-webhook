@@ -24,10 +24,19 @@ const config = {
   cloudHost: process.env.JIRA_CLOUD_HOST, // e.g., https://your-site.atlassian.net
   projectKey: process.env.JIRA_PROJECT_KEY, // e.g., PROJ (project key for creating issues)
   authCode: process.env.JIRA_AUTH_CODE, // Get this from OAuth flow
+  personalAccessToken: process.env.JIRA_PERSONAL_ACCESS_TOKEN, // Alternative to OAuth
 };
 
-// Validate required environment variables
-const requiredEnvVars = ['JIRA_CLIENT_ID', 'JIRA_CLIENT_SECRET', 'JIRA_CLOUD_HOST', 'JIRA_PROJECT_KEY'];
+// Validate required environment variables - either OAuth or Personal Access Token
+const hasOAuth = process.env.JIRA_CLIENT_ID && process.env.JIRA_CLIENT_SECRET;
+const hasPersonalToken = process.env.JIRA_PERSONAL_ACCESS_TOKEN;
+
+if (!hasOAuth && !hasPersonalToken) {
+  console.error('❌ Missing authentication: Either OAuth credentials (JIRA_CLIENT_ID, JIRA_CLIENT_SECRET) or Personal Access Token (JIRA_PERSONAL_ACCESS_TOKEN) is required');
+  process.exit(1);
+}
+
+const requiredEnvVars = ['JIRA_CLOUD_HOST', 'JIRA_PROJECT_KEY'];
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 
 if (missingEnvVars.length > 0) {
@@ -262,8 +271,15 @@ app.post('/webhook/feedback', async (req, res) => {
   }
 });
 
-// Ensure we have a valid OAuth token
+// Ensure we have a valid token (either OAuth or Personal Access Token)
 async function ensureValidToken() {
+  // If using Personal Access Token, use it directly
+  if (config.personalAccessToken) {
+    accessToken = `Bearer ${config.personalAccessToken}`;
+    return;
+  }
+  
+  // Otherwise, use OAuth flow
   if (!accessToken || !tokenExpiresAt || Date.now() >= tokenExpiresAt) {
     console.log('🔄 Getting fresh OAuth token...');
     
@@ -278,7 +294,7 @@ async function ensureValidToken() {
       config.authCode
     );
     
-    accessToken = tokenData.access_token;
+    accessToken = `Bearer ${tokenData.access_token}`;
     refreshToken = tokenData.refresh_token;
     tokenExpiresAt = Date.now() + (tokenData.expires_in * 1000);
     
