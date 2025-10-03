@@ -1,0 +1,250 @@
+# Customer Feedback to Polaris Webhook Service
+
+A webhook service that receives customer feedback from Zapier and automatically creates insights in JIRA Polaris.
+
+## 🎯 Overview
+
+This service acts as a bridge between your customer feedback collection tools (via Zapier) and JIRA Polaris, automatically creating insights from customer feedback data.
+
+## 🚀 Features
+
+- **Webhook endpoint** for receiving feedback from Zapier
+- **OAuth 2.0 integration** with JIRA
+- **Automatic token management** with refresh capabilities
+- **Polaris insight creation** with structured data
+- **Health monitoring** endpoints
+- **Error handling** and logging
+- **CORS support** for web requests
+
+## 📋 Prerequisites
+
+1. **JIRA Cloud site** with Polaris enabled
+2. **Atlassian OAuth 2.0 app** (3LO app)
+3. **Node.js 18+** installed
+4. **Zapier account** (for triggering webhooks)
+
+## 🔧 Setup
+
+### 1. Create Atlassian OAuth App
+
+1. Go to [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/create-3lo-app/)
+2. Create a new **3LO (3-Legged OAuth) app**
+3. Go to **Permissions** tab and add **Jira platform REST API** with these scopes:
+   - `read:jira-user`
+   - `read:jira-work` 
+   - `write:jira-work`
+4. Go to **Authorization** tab and set **Callback URL** to `http://localhost:3000`
+5. Copy the **Client ID** and **Client Secret** from the **Settings** tab
+
+### 2. Clone and Install
+
+```bash
+git clone <your-repo-url>
+cd customer-feedback-polaris-webhook
+npm install
+```
+
+### 3. Environment Configuration
+
+Copy the environment template:
+```bash
+cp env.template .env
+```
+
+Edit `.env` with your configuration:
+```bash
+# JIRA OAuth Configuration
+JIRA_CLIENT_ID=your_client_id_here
+JIRA_CLIENT_SECRET=your_client_secret_here
+JIRA_REDIRECT_URI=http://localhost:3000
+JIRA_AUTH_CODE=your_authorization_code_here
+
+# JIRA Site Configuration
+JIRA_CLOUD_HOST=https://your-site.atlassian.net
+JIRA_ISSUE_KEY=PROJ-123
+
+# Server Configuration
+PORT=3000
+NODE_ENV=production
+```
+
+### 4. OAuth Setup
+
+1. Start the service:
+   ```bash
+   npm start
+   ```
+
+2. Visit the auth setup endpoint:
+   ```
+   http://localhost:3000/auth/setup
+   ```
+
+3. Click the authorization URL and complete OAuth flow
+
+4. Copy the authorization code from the redirect URL
+
+5. Update your `.env` file with the authorization code
+
+6. Restart the service
+
+### 5. Deploy to Render
+
+1. **Connect your GitHub repo** to Render
+2. **Create a new Web Service**
+3. **Set environment variables** in Render dashboard:
+   - `JIRA_CLIENT_ID`
+   - `JIRA_CLIENT_SECRET` 
+   - `JIRA_CLOUD_HOST`
+   - `JIRA_ISSUE_KEY`
+   - `JIRA_AUTH_CODE`
+4. **Deploy**
+
+## 🔗 Zapier Configuration
+
+### Webhook Setup
+
+1. **Create a new Zap**
+2. **Choose your trigger** (form, email, etc.)
+3. **Add action**: **Webhooks by Zapier** → **POST**
+4. **Configure webhook**:
+   - **URL**: `https://your-app.onrender.com/webhook/feedback`
+   - **Method**: `POST`
+   - **Headers**: `Content-Type: application/json`
+   - **Payload**:
+     ```json
+     {
+       "customer_name": "{{customer_name}}",
+       "issue_description": "{{issue_description}}",
+       "priority": "{{priority}}",
+       "email": "{{email}}",
+       "timestamp": "{{timestamp}}"
+     }
+     ```
+
+### Required Fields
+
+- `customer_name` (required)
+- `issue_description` (required)
+
+### Optional Fields
+
+- `priority` (default: "medium")
+- `email`
+- `timestamp`
+- `source` (default: "zapier")
+
+## 📡 API Endpoints
+
+### `POST /webhook/feedback`
+Main webhook endpoint for receiving feedback from Zapier.
+
+**Request Body:**
+```json
+{
+  "customer_name": "John Doe",
+  "issue_description": "The login process is too slow",
+  "priority": "high",
+  "email": "john@example.com"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "insightId": "insight_123",
+  "message": "Feedback sent to Polaris successfully",
+  "timestamp": "2024-01-15T10:30:00.000Z"
+}
+```
+
+### `GET /health`
+Health check endpoint.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2024-01-15T10:30:00.000Z",
+  "version": "1.0.0"
+}
+```
+
+### `GET /auth/setup`
+OAuth setup instructions and authorization URL.
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+1. **"No authorization code found"**
+   - Complete the OAuth setup process
+   - Visit `/auth/setup` for instructions
+
+2. **"No accessible resource found"**
+   - Check that `JIRA_CLOUD_HOST` matches your JIRA site URL exactly
+   - Ensure your OAuth app has access to the JIRA site
+
+3. **"Failed to get issue"**
+   - Verify `JIRA_ISSUE_KEY` exists and you have access to it
+   - Check that the issue key format is correct (e.g., "PROJ-123")
+
+4. **"Invalid JIRA token format"**
+   - The service automatically handles token formatting
+   - Check that your OAuth credentials are correct
+
+### Logs
+
+Check the service logs for detailed error messages:
+```bash
+# Local development
+npm start
+
+# Render deployment
+# Check logs in Render dashboard
+```
+
+## 🔒 Security
+
+- **Environment variables** for sensitive data
+- **OAuth 2.0** for secure JIRA authentication
+- **CORS** enabled for web requests
+- **Input validation** for webhook data
+- **Error handling** to prevent data leaks
+
+## 📊 Monitoring
+
+The service includes:
+- **Health check endpoint** for monitoring
+- **Structured logging** for debugging
+- **Error tracking** and reporting
+- **Token expiration** handling
+
+## 🚀 Production Considerations
+
+1. **Use Redis** for token storage instead of memory
+2. **Add rate limiting** for webhook endpoints
+3. **Implement proper logging** (Winston, etc.)
+4. **Add monitoring** (Sentry, DataDog, etc.)
+5. **Set up alerts** for failures
+6. **Use HTTPS** in production
+
+## 📝 License
+
+MIT License - see LICENSE file for details.
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## 📞 Support
+
+For issues and questions:
+1. Check the troubleshooting section
+2. Review the logs
+3. Open an issue in the repository
