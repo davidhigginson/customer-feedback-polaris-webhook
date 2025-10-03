@@ -48,7 +48,7 @@ app.get('/health', (req, res) => {
 
 // Auth setup endpoint - helps with OAuth flow
 app.get('/auth/setup', (req, res) => {
-  const authUrl = `https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=${config.clientId}&scope=${encodeURIComponent('read:jira-user read:jira-work write:jira-work')}&redirect_uri=${encodeURIComponent(config.redirectUri)}&state=&response_type=code&prompt=consent`;
+  const authUrl = `https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=${config.clientId}&scope=${encodeURIComponent('read:jira-work write:jira-work manage:jira-project read:jira-user manage:jira-webhook')}&redirect_uri=${encodeURIComponent(config.redirectUri)}&state=&response_type=code&prompt=consent`;
   
   res.json({
     message: 'OAuth setup required',
