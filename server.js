@@ -31,11 +31,19 @@ const config = {
   cloudHost: process.env.JIRA_CLOUD_HOST, // e.g., https://your-site.atlassian.net
   projectKey: process.env.JIRA_PROJECT_KEY, // e.g., PROJ (project key for creating issues)
   authCode: process.env.JIRA_AUTH_CODE, // Get this from OAuth flow
-  refreshToken: process.env.JIRA_REFRESH_TOKEN,
+  personalAccessToken: process.env.JIRA_PERSONAL_ACCESS_TOKEN, // Alternative to OAuth
 };
 
-// Validate required environment variables
-const requiredEnvVars = ['JIRA_CLIENT_ID', 'JIRA_CLIENT_SECRET', 'JIRA_CLOUD_HOST', 'JIRA_PROJECT_KEY'];
+// Validate required environment variables - either OAuth or Personal Access Token
+const hasOAuth = process.env.JIRA_CLIENT_ID && process.env.JIRA_CLIENT_SECRET;
+const hasPersonalToken = process.env.JIRA_PERSONAL_ACCESS_TOKEN;
+
+if (!hasOAuth && !hasPersonalToken) {
+  console.error('❌ Missing authentication: Either OAuth credentials (JIRA_CLIENT_ID, JIRA_CLIENT_SECRET) or Personal Access Token (JIRA_PERSONAL_ACCESS_TOKEN) is required');
+  process.exit(1);
+}
+
+const requiredEnvVars = ['JIRA_CLOUD_HOST', 'JIRA_PROJECT_KEY'];
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 
 if (missingEnvVars.length > 0) {
@@ -69,31 +77,37 @@ app.get('/auth/setup', (req, res) => {
   });
 });
 
-// OAuth callback handler - receives authorization code from JIRA
+// OAuth callback handler - receives authorization code from JIRA (like push example)
 app.get('/', async (req, res) => {
   const { code, error } = req.query;
   
   if (error) {
     console.error('❌ OAuth error:', error);
-    return res.status(400).json({
-      success: false,
-      error: `OAuth error: ${error}`,
-      message: 'Please try the authorization flow again'
-    });
+    res.writeHead(400, { 'Content-Type': 'text/html' });
+    return res.end(`
+      <meta charset="UTF-8" />
+      <h3 style="margin: 40px auto; text-align: center; color: red;">
+        OAuth Error: ${error}
+      </h3>
+      <p style="text-align: center;">
+        <a href="/auth/setup">Try again</a>
+      </p>
+    `);
   }
   
   if (!code) {
-    return res.json({
-      message: 'Customer Feedback to Polaris Webhook Service',
-      version: '1.0.1',
-      endpoints: {
-        webhook: '/webhook/feedback',
-        health: '/health',
-        auth: '/auth/setup'
-      },
-      status: 'running',
-      oauthCallback: 'Ready to receive authorization codes'
-    });
+    // Show service info when no code is provided
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    return res.end(`
+      <meta charset="UTF-8" />
+      <h3 style="margin: 40px auto; text-align: center;">
+        Customer Feedback to Polaris Webhook Service
+      </h3>
+      <p style="text-align: center;">
+        <a href="/auth/setup">Setup OAuth</a> | 
+        <a href="/health">Health Check</a>
+      </p>
+    `);
   }
   
   try {
@@ -116,32 +130,38 @@ app.get('/', async (req, res) => {
 
     console.log('✅ OAuth setup completed successfully!');
     console.log('🔑 Access token obtained');
-    console.log('🔁 Refresh token obtained. Store this securely (e.g., JIRA_REFRESH_TOKEN env var).');
-
-    res.json({
-      success: true,
-      message: 'OAuth setup completed successfully!',
-      details: {
-        accessToken: accessToken ? 'Obtained' : 'Failed',
-        expiresAt: new Date(tokenExpiresAt).toISOString(),
-        refreshToken: refreshToken ? 'Obtained' : 'Missing',
-        refreshTokenValue: refreshToken,
-        nextSteps: [
-          'Your webhook is now ready to receive requests',
-          'Test the webhook endpoint: POST /webhook/feedback',
-          'Check health: GET /health',
-          'Persist the refresh token by setting the JIRA_REFRESH_TOKEN environment variable'
-        ]
-      }
-    });
+    
+    // Display success message like push example
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`
+      <meta charset="UTF-8" />
+      <h3 style="margin: 40px auto; text-align: center; color: green;">
+        OAuth Setup Complete! 🥳
+      </h3>
+      <p style="text-align: center;">
+        Your webhook is now ready to receive requests from Zapier.
+      </p>
+      <p style="text-align: center;">
+        <a href="/health">Check Health</a> | 
+        <a href="/webhook/feedback">Test Webhook</a>
+      </p>
+    `);
     
   } catch (error) {
     console.error('❌ Error processing authorization code:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      message: 'Failed to process authorization code. Please try again.'
-    });
+    res.writeHead(500, { 'Content-Type': 'text/html' });
+    res.end(`
+      <meta charset="UTF-8" />
+      <h3 style="margin: 40px auto; text-align: center; color: red;">
+        OAuth Setup Failed
+      </h3>
+      <p style="text-align: center;">
+        Error: ${error.message}
+      </p>
+      <p style="text-align: center;">
+        <a href="/auth/setup">Try again</a>
+      </p>
+    `);
   }
 });
 
@@ -260,35 +280,33 @@ app.post('/webhook/feedback', async (req, res) => {
   }
 });
 
-// Ensure we have a valid OAuth token
+// Ensure we have a valid token (either OAuth or Personal Access Token)
 async function ensureValidToken() {
-  const needsRefresh =
-    !accessToken ||
-    !tokenExpiresAt ||
-    Date.now() >= tokenExpiresAt - 60000; // refresh 1 minute before expiry
-
-  if (!needsRefresh) {
+  // If using Personal Access Token, use it directly
+  if (config.personalAccessToken) {
+    accessToken = `Bearer ${config.personalAccessToken}`;
     return;
   }
-
-  console.log('🔄 Getting fresh OAuth token...');
-
-  const refreshTokenToUse = refreshToken || config.refreshToken;
-
-  if (refreshTokenToUse) {
-    const tokenData = await refreshAccessToken(
+  
+  // Otherwise, use OAuth flow
+  if (!accessToken || !tokenExpiresAt || Date.now() >= tokenExpiresAt) {
+    console.log('🔄 Getting fresh OAuth token...');
+    
+    if (!config.authCode) {
+      throw new Error('No authorization code found. Please complete OAuth setup first. Visit /auth/setup for instructions.');
+    }
+    
+    const tokenData = await getAccessToken(
       config.clientId,
       config.clientSecret,
       refreshTokenToUse
     );
-
-    accessToken = tokenData.access_token;
-    refreshToken = tokenData.refresh_token || refreshTokenToUse;
-    config.refreshToken = refreshToken;
-    tokenExpiresAt = Date.now() + tokenData.expires_in * 1000;
-
-    console.log('✅ OAuth token refreshed successfully');
-    return;
+    
+    accessToken = `Bearer ${tokenData.access_token}`;
+    refreshToken = tokenData.refresh_token;
+    tokenExpiresAt = Date.now() + (tokenData.expires_in * 1000);
+    
+    console.log('✅ OAuth token obtained successfully');
   }
 
   if (!config.authCode || authCodeUsed) {
