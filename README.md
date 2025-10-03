@@ -56,8 +56,10 @@ Edit `.env` with your configuration:
 # JIRA OAuth Configuration
 JIRA_CLIENT_ID=your_client_id_here
 JIRA_CLIENT_SECRET=your_client_secret_here
+# Optional: override the detected base URL when running behind a proxy (Render sets this automatically)
 JIRA_REDIRECT_URI=http://localhost:3000
 JIRA_AUTH_CODE=your_authorization_code_here
+JIRA_REFRESH_TOKEN=your_refresh_token_here # optional: set after completing OAuth flow
 
 # JIRA Site Configuration
 JIRA_CLOUD_HOST=https://your-site.atlassian.net
@@ -82,23 +84,31 @@ NODE_ENV=production
 
 3. Click the authorization URL and complete OAuth flow
 
-4. Copy the authorization code from the redirect URL
+4. The server will exchange the code for tokens and respond with setup details (look for `refreshTokenValue` in the JSON response)
 
-5. Update your `.env` file with the authorization code
+5. Copy the **refresh token** from the JSON response (or logs) and add it to your environment as `JIRA_REFRESH_TOKEN`
 
-6. Restart the service
+6. (Optional) Remove `JIRA_AUTH_CODE` once the refresh token is stored. Future refreshes use the long-lived refresh token.
+
+7. Restart the service
 
 ### 5. Deploy to Render
 
-1. **Connect your GitHub repo** to Render
-2. **Create a new Web Service**
+1. **Create a `production` branch** in your repo and push it to GitHub. Render will auto-deploy from this branch using the provided `render.yaml` blueprint.
+2. **Connect your GitHub repo** to Render and let it detect the blueprint
 3. **Set environment variables** in Render dashboard:
    - `JIRA_CLIENT_ID`
-   - `JIRA_CLIENT_SECRET` 
+   - `JIRA_CLIENT_SECRET`
    - `JIRA_CLOUD_HOST`
    - `JIRA_PROJECT_KEY`
-   - `JIRA_AUTH_CODE`
+   - `JIRA_AUTH_CODE` (only needed the first time you authorize)
+   - `JIRA_REFRESH_TOKEN` (required after completing OAuth setup)
+    - `JIRA_REDIRECT_URI` (optional — defaults to Render's `RENDER_EXTERNAL_URL`)
 4. **Deploy**
+
+> ℹ️ The `render.yaml` blueprint provisions a single Node web service on the Free plan. Adjust the plan or add additional services as needed before confirming the deployment in Render.
+
+Once the service is created, Render automatically deploys every push to the `production` branch.
 
 ## 🔗 Zapier Configuration
 
