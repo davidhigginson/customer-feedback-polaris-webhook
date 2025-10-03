@@ -4,6 +4,7 @@ const { createInsight } = require('./polaris/createInsight');
 const { getAccessToken } = require('./jira/accessToken');
 const { getAccessibleResources } = require('./jira/accessibleResources');
 const { getIssue } = require('./jira/issue');
+const { createIssue } = require('./jira/createIssue');
 require('dotenv').config();
 
 const app = express();
@@ -21,12 +22,12 @@ const config = {
   clientSecret: process.env.JIRA_CLIENT_SECRET,
   redirectUri: process.env.JIRA_REDIRECT_URI || 'http://localhost:3000',
   cloudHost: process.env.JIRA_CLOUD_HOST, // e.g., https://your-site.atlassian.net
-  issueKey: process.env.JIRA_ISSUE_KEY, // e.g., PROJ-123
+  projectKey: process.env.JIRA_PROJECT_KEY, // e.g., PROJ (project key for creating issues)
   authCode: process.env.JIRA_AUTH_CODE, // Get this from OAuth flow
 };
 
 // Validate required environment variables
-const requiredEnvVars = ['JIRA_CLIENT_ID', 'JIRA_CLIENT_SECRET', 'JIRA_CLOUD_HOST', 'JIRA_ISSUE_KEY'];
+const requiredEnvVars = ['JIRA_CLIENT_ID', 'JIRA_CLIENT_SECRET', 'JIRA_CLOUD_HOST', 'JIRA_PROJECT_KEY'];
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 
 if (missingEnvVars.length > 0) {
@@ -80,8 +81,12 @@ app.post('/webhook/feedback', async (req, res) => {
     console.log('📨 Received feedback from Zapier:', JSON.stringify(req.body, null, 2));
     
     const { 
-      customer_name, 
-      issue_description, 
+      issue_key,
+      summary,
+      description,
+      created_by,
+      impact,
+      customer_name,
       priority = 'medium',
       source = 'zapier',
       email,
@@ -89,18 +94,48 @@ app.post('/webhook/feedback', async (req, res) => {
     } = req.body;
     
     // Validate required fields
-    if (!customer_name || !issue_description) {
+    if (!summary || !description) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Missing required fields: customer_name and issue_description are required' 
+        error: 'Missing required fields: summary and description are required' 
       });
     }
     
     // Get or refresh OAuth token
     await ensureValidToken();
     
-    // Get cloud ID and issue details
-    const { cloudId, projectId, issueId } = await getJiraDetails();
+    // Get cloud ID
+    const cloudId = await getCloudId();
+    
+    let issueKey, issueId, projectId;
+    
+    if (issue_key) {
+      // Use existing issue
+      console.log('🔍 Using existing issue:', issue_key);
+      const issue = await getIssue(accessToken, cloudId, issue_key);
+      issueKey = issue_key;
+      issueId = issue.id;
+      projectId = issue.fields.project.id;
+    } else {
+      // Create new issue
+      console.log('🆕 Creating new JIRA issue...');
+      const issueData = {
+        summary,
+        description,
+        createdBy: created_by,
+        impact: impact ? parseInt(impact) : null
+      };
+      
+      const newIssue = await createIssue(accessToken, cloudId, config.projectKey, issueData);
+      issueKey = newIssue.issueKey;
+      issueId = newIssue.issueId;
+      
+      // Get project ID from the created issue
+      const issue = await getIssue(accessToken, cloudId, issueKey);
+      projectId = issue.fields.project.id;
+      
+      console.log('✅ Created JIRA issue:', issueKey);
+    }
     
     // Create Polaris insight
     const insightId = await createInsight(accessToken, {
@@ -115,17 +150,21 @@ app.post('/webhook/feedback', async (req, res) => {
             type: "paragraph",
             content: [{
               type: "text",
-              text: `Customer: ${customer_name}\nIssue: ${issue_description}\nPriority: ${priority}${email ? `\nEmail: ${email}` : ''}${timestamp ? `\nTimestamp: ${timestamp}` : ''}`
+              text: `Issue: ${summary}\nDescription: ${description}${created_by ? `\nCreated by: ${created_by}` : ''}${impact ? `\nImpact: ${impact}` : ''}${customer_name ? `\nCustomer: ${customer_name}` : ''}${priority ? `\nPriority: ${priority}` : ''}${email ? `\nEmail: ${email}` : ''}${timestamp ? `\nTimestamp: ${timestamp}` : ''}`
             }]
           }]
         },
         data: [
-          { key: "customer_name", value: customer_name },
-          { key: "issue_description", value: issue_description },
-          { key: "priority", value: priority },
-          { key: "source", value: source },
+          { key: "issue_key", value: issueKey },
+          { key: "summary", value: summary },
+          { key: "description", value: description },
+          ...(created_by ? [{ key: "created_by", value: created_by }] : []),
+          ...(impact ? [{ key: "impact", value: impact.toString() }] : []),
+          ...(customer_name ? [{ key: "customer_name", value: customer_name }] : []),
+          ...(priority ? [{ key: "priority", value: priority }] : []),
           ...(email ? [{ key: "email", value: email }] : []),
-          ...(timestamp ? [{ key: "timestamp", value: timestamp }] : [])
+          ...(timestamp ? [{ key: "timestamp", value: timestamp }] : []),
+          { key: "source", value: source }
         ]
       }
     });
@@ -135,7 +174,9 @@ app.post('/webhook/feedback', async (req, res) => {
     res.json({ 
       success: true, 
       insightId,
-      message: 'Feedback sent to Polaris successfully',
+      issueKey,
+      issueUrl: `${config.cloudHost}/browse/${issueKey}`,
+      message: 'Feedback processed and sent to Polaris successfully',
       timestamp: new Date().toISOString()
     });
     
@@ -173,8 +214,8 @@ async function ensureValidToken() {
   }
 }
 
-// Get JIRA cloud ID and issue details
-async function getJiraDetails() {
+// Get JIRA cloud ID
+async function getCloudId() {
   // Get accessible resources to find cloud ID
   const accessibleResources = await getAccessibleResources(accessToken);
   const cloudResource = accessibleResources.find(resource => resource.url === config.cloudHost);
@@ -183,16 +224,7 @@ async function getJiraDetails() {
     throw new Error(`No accessible resource found for host: ${config.cloudHost}`);
   }
   
-  const cloudId = cloudResource.id;
-  
-  // Get issue details
-  const issue = await getIssue(accessToken, cloudId, config.issueKey);
-  
-  return {
-    cloudId: cloudId,
-    projectId: issue.fields.project.id,
-    issueId: issue.id
-  };
+  return cloudResource.id;
 }
 
 // Error handling middleware
