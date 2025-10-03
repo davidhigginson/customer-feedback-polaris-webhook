@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: customer-feedback-polaris-webhook
+    env: node
+    plan: free
+    branch: production
+    autoDeploy: true
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: '18'
+      - key: JIRA_CLIENT_ID
+        sync: false
+      - key: JIRA_CLIENT_SECRET
+        sync: false
+      - key: JIRA_CLOUD_HOST
+        sync: false
+      - key: JIRA_PROJECT_KEY
+        sync: false
+      - key: JIRA_AUTH_CODE
+        sync: false
+      - key: JIRA_REFRESH_TOKEN
+        sync: false
+      - key: JIRA_REDIRECT_URI
+        sync: false

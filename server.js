@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { createInsight } = require('./polaris/createInsight');
-const { getAccessToken } = require('./jira/accessToken');
+const { getAccessTokenWithAuthCode, refreshAccessToken } = require('./jira/accessToken');
 const { getAccessibleResources } = require('./jira/accessibleResources');
 const { getIssue } = require('./jira/issue');
 const { createIssue } = require('./jira/createIssue');
@@ -11,16 +11,23 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Render terminates requests at a proxy, so trust the first proxy hop when
+// reconstructing URLs (e.g., when deriving the redirect URI).
+app.set('trust proxy', true);
+
 // Store OAuth tokens (use Redis in production for persistence)
 let accessToken = null;
 let refreshToken = null;
 let tokenExpiresAt = null;
+let authCodeUsed = false;
 
 // Configuration from environment variables
+const renderExternalUrl = process.env.RENDER_EXTERNAL_URL;
+
 const config = {
   clientId: process.env.JIRA_CLIENT_ID,
   clientSecret: process.env.JIRA_CLIENT_SECRET,
-  redirectUri: process.env.JIRA_REDIRECT_URI || 'http://localhost:3000',
+  redirectUri: process.env.JIRA_REDIRECT_URI || renderExternalUrl || 'http://localhost:3000',
   cloudHost: process.env.JIRA_CLOUD_HOST, // e.g., https://your-site.atlassian.net
   projectKey: process.env.JIRA_PROJECT_KEY, // e.g., PROJ (project key for creating issues)
   authCode: process.env.JIRA_AUTH_CODE, // Get this from OAuth flow
@@ -107,18 +114,20 @@ app.get('/', async (req, res) => {
     console.log('🔄 Processing authorization code...');
     
     // Exchange authorization code for access token
-    const tokenData = await getAccessToken(
+    const tokenData = await getAccessTokenWithAuthCode(
       config.clientId,
       config.clientSecret,
       config.redirectUri,
       code
     );
-    
+
     // Store tokens
     accessToken = tokenData.access_token;
     refreshToken = tokenData.refresh_token;
     tokenExpiresAt = Date.now() + (tokenData.expires_in * 1000);
-    
+    authCodeUsed = true;
+    config.refreshToken = refreshToken;
+
     console.log('✅ OAuth setup completed successfully!');
     console.log('🔑 Access token obtained');
     
@@ -290,8 +299,7 @@ async function ensureValidToken() {
     const tokenData = await getAccessToken(
       config.clientId,
       config.clientSecret,
-      config.redirectUri,
-      config.authCode
+      refreshTokenToUse
     );
     
     accessToken = `Bearer ${tokenData.access_token}`;
@@ -300,6 +308,27 @@ async function ensureValidToken() {
     
     console.log('✅ OAuth token obtained successfully');
   }
+
+  if (!config.authCode || authCodeUsed) {
+    throw new Error(
+      'No authorization or refresh token found. Complete OAuth setup via /auth/setup and configure JIRA_REFRESH_TOKEN.'
+    );
+  }
+
+  const tokenData = await getAccessTokenWithAuthCode(
+    config.clientId,
+    config.clientSecret,
+    config.redirectUri,
+    config.authCode
+  );
+
+  accessToken = tokenData.access_token;
+  refreshToken = tokenData.refresh_token;
+  config.refreshToken = refreshToken;
+  tokenExpiresAt = Date.now() + tokenData.expires_in * 1000;
+  authCodeUsed = true;
+
+  console.log('✅ OAuth token obtained successfully using authorization code');
 }
 
 // Get JIRA cloud ID
@@ -338,11 +367,16 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('🚀 Customer Feedback to Polaris Webhook Service started');
   console.log(`📍 Server running on port ${PORT}`);
+  if (renderExternalUrl) {
+    console.log(`🌐 External URL: ${renderExternalUrl}`);
+  }
   console.log(`🔗 Webhook endpoint: http://localhost:${PORT}/webhook/feedback`);
   console.log(`🏥 Health check: http://localhost:${PORT}/health`);
   console.log(`🔐 Auth setup: http://localhost:${PORT}/auth/setup`);
   
-  if (!config.authCode) {
+  if (!config.refreshToken && !config.authCode) {
     console.log('⚠️  OAuth setup required. Visit /auth/setup for instructions.');
+  } else if (!config.refreshToken) {
+    console.log('⚠️  Configure JIRA_REFRESH_TOKEN with the refresh token obtained from /auth/setup.');
   }
 });
