@@ -61,7 +61,7 @@ JIRA_AUTH_CODE=your_authorization_code_here
 
 # JIRA Site Configuration
 JIRA_CLOUD_HOST=https://your-site.atlassian.net
-JIRA_ISSUE_KEY=PROJ-123
+JIRA_PROJECT_KEY=PROJ
 
 # Server Configuration
 PORT=3000
@@ -96,7 +96,7 @@ NODE_ENV=production
    - `JIRA_CLIENT_ID`
    - `JIRA_CLIENT_SECRET` 
    - `JIRA_CLOUD_HOST`
-   - `JIRA_ISSUE_KEY`
+   - `JIRA_PROJECT_KEY`
    - `JIRA_AUTH_CODE`
 4. **Deploy**
 
@@ -114,8 +114,11 @@ NODE_ENV=production
    - **Payload**:
      ```json
      {
+       "summary": "{{summary}}",
+       "description": "{{description}}",
+       "created_by": "{{created_by}}",
+       "impact": "{{impact}}",
        "customer_name": "{{customer_name}}",
-       "issue_description": "{{issue_description}}",
        "priority": "{{priority}}",
        "email": "{{email}}",
        "timestamp": "{{timestamp}}"
@@ -124,14 +127,18 @@ NODE_ENV=production
 
 ### Required Fields
 
-- `customer_name` (required)
-- `issue_description` (required)
+- `summary` (required) - Issue title/summary
+- `description` (required) - Issue description
 
 ### Optional Fields
 
+- `issue_key` - Existing JIRA issue key (if not provided, creates new issue)
+- `created_by` - Who created the issue
+- `impact` - Impact number (1-10 scale)
+- `customer_name` - Customer name
 - `priority` (default: "medium")
-- `email`
-- `timestamp`
+- `email` - Customer email
+- `timestamp` - When the feedback was received
 - `source` (default: "zapier")
 
 ## 📡 API Endpoints
@@ -142,10 +149,13 @@ Main webhook endpoint for receiving feedback from Zapier.
 **Request Body:**
 ```json
 {
-  "customer_name": "John Doe",
-  "issue_description": "The login process is too slow",
+  "summary": "Login process is too slow",
+  "description": "Customers are experiencing delays when logging in",
+  "created_by": "John Doe",
+  "impact": 8,
+  "customer_name": "Jane Smith",
   "priority": "high",
-  "email": "john@example.com"
+  "email": "jane@example.com"
 }
 ```
 
@@ -154,7 +164,9 @@ Main webhook endpoint for receiving feedback from Zapier.
 {
   "success": true,
   "insightId": "insight_123",
-  "message": "Feedback sent to Polaris successfully",
+  "issueKey": "PROJ-456",
+  "issueUrl": "https://your-site.atlassian.net/browse/PROJ-456",
+  "message": "Feedback processed and sent to Polaris successfully",
   "timestamp": "2024-01-15T10:30:00.000Z"
 }
 ```
@@ -187,7 +199,7 @@ OAuth setup instructions and authorization URL.
    - Ensure your OAuth app has access to the JIRA site
 
 3. **"Failed to get issue"**
-   - Verify `JIRA_ISSUE_KEY` exists and you have access to it
+   - Verify `JIRA_PROJECT_KEY` exists and you have access to it
    - Check that the issue key format is correct (e.g., "PROJ-123")
 
 4. **"Invalid JIRA token format"**
