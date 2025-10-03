@@ -12,11 +12,11 @@ This guide covers deploying the Customer Feedback to Polaris Webhook Service to 
 
 ### Step 1: Prepare Your Repository
 
-1. **Push your code** to GitHub:
+1. **Push your code** to GitHub (Render auto-deploys from the `production` branch defined in `render.yaml`):
    ```bash
    git add .
    git commit -m "Initial webhook service"
-   git push origin main
+   git push origin production
    ```
 
 2. **Verify all files** are included:
@@ -29,14 +29,13 @@ This guide covers deploying the Customer Feedback to Polaris Webhook Service to 
 ### Step 2: Create Render Service
 
 1. **Log into Render** dashboard
-2. **Click "New +"** → **"Web Service"**
-3. **Connect your GitHub repository**
-4. **Configure the service**:
+2. **Click "New +"** → **"Blueprint"** and point Render at your repository (it will detect `render.yaml` automatically)
+3. **Review the generated service**:
    - **Name**: `customer-feedback-polaris-webhook`
    - **Environment**: `Node`
+   - **Plan**: Free (adjust if you need higher capacity)
    - **Build Command**: `npm install`
    - **Start Command**: `npm start`
-   - **Plan**: Choose appropriate plan (Free tier available)
 
 ### Step 3: Set Environment Variables
 
@@ -45,23 +44,26 @@ In the Render dashboard, go to **Environment** tab and add:
 ```bash
 JIRA_CLIENT_ID=your_client_id_here
 JIRA_CLIENT_SECRET=your_client_secret_here
-JIRA_REDIRECT_URI=https://your-app.onrender.com
+JIRA_REDIRECT_URI=https://your-app.onrender.com # optional; defaults to Render's RENDER_EXTERNAL_URL
 JIRA_CLOUD_HOST=https://your-site.atlassian.net
 JIRA_PROJECT_KEY=PROJ
 JIRA_AUTH_CODE=your_authorization_code_here
+JIRA_REFRESH_TOKEN=your_refresh_token_here
 PORT=3000
 NODE_ENV=production
 ```
 
 **Important Notes:**
-- Update `JIRA_REDIRECT_URI` to your Render app URL
+- `JIRA_REDIRECT_URI` is optional in Render. If you omit it, the server automatically uses `RENDER_EXTERNAL_URL` exposed by Render.
 - Get `JIRA_AUTH_CODE` by visiting your deployed app's `/auth/setup` endpoint
+- After completing the OAuth flow, capture the `refreshTokenValue` and set `JIRA_REFRESH_TOKEN` so the service can refresh tokens automatically.
 
 ### Step 4: Deploy
 
 1. **Click "Create Web Service"**
 2. **Wait for deployment** to complete
 3. **Note your app URL** (e.g., `https://customer-feedback-polaris-webhook.onrender.com`)
+4. Subsequent pushes to the `production` branch trigger automatic deployments.
 
 ### Step 5: Complete OAuth Setup
 

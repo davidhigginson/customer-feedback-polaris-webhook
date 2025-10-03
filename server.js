@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { createInsight } = require('./polaris/createInsight');
-const { getAccessToken } = require('./jira/accessToken');
+const { getAccessTokenWithAuthCode, refreshAccessToken } = require('./jira/accessToken');
 const { getAccessibleResources } = require('./jira/accessibleResources');
 const { getIssue } = require('./jira/issue');
 const { createIssue } = require('./jira/createIssue');
@@ -11,19 +11,27 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Render terminates requests at a proxy, so trust the first proxy hop when
+// reconstructing URLs (e.g., when deriving the redirect URI).
+app.set('trust proxy', true);
+
 // Store OAuth tokens (use Redis in production for persistence)
 let accessToken = null;
 let refreshToken = null;
 let tokenExpiresAt = null;
+let authCodeUsed = false;
 
 // Configuration from environment variables
+const renderExternalUrl = process.env.RENDER_EXTERNAL_URL;
+
 const config = {
   clientId: process.env.JIRA_CLIENT_ID,
   clientSecret: process.env.JIRA_CLIENT_SECRET,
-  redirectUri: process.env.JIRA_REDIRECT_URI || 'http://localhost:3000',
+  redirectUri: process.env.JIRA_REDIRECT_URI || renderExternalUrl || 'http://localhost:3000',
   cloudHost: process.env.JIRA_CLOUD_HOST, // e.g., https://your-site.atlassian.net
   projectKey: process.env.JIRA_PROJECT_KEY, // e.g., PROJ (project key for creating issues)
   authCode: process.env.JIRA_AUTH_CODE, // Get this from OAuth flow
+  refreshToken: process.env.JIRA_REFRESH_TOKEN,
 };
 
 // Validate required environment variables
@@ -92,31 +100,37 @@ app.get('/', async (req, res) => {
     console.log('🔄 Processing authorization code...');
     
     // Exchange authorization code for access token
-    const tokenData = await getAccessToken(
+    const tokenData = await getAccessTokenWithAuthCode(
       config.clientId,
       config.clientSecret,
       config.redirectUri,
       code
     );
-    
+
     // Store tokens
     accessToken = tokenData.access_token;
     refreshToken = tokenData.refresh_token;
     tokenExpiresAt = Date.now() + (tokenData.expires_in * 1000);
-    
+    authCodeUsed = true;
+    config.refreshToken = refreshToken;
+
     console.log('✅ OAuth setup completed successfully!');
     console.log('🔑 Access token obtained');
-    
+    console.log('🔁 Refresh token obtained. Store this securely (e.g., JIRA_REFRESH_TOKEN env var).');
+
     res.json({
       success: true,
       message: 'OAuth setup completed successfully!',
       details: {
         accessToken: accessToken ? 'Obtained' : 'Failed',
         expiresAt: new Date(tokenExpiresAt).toISOString(),
+        refreshToken: refreshToken ? 'Obtained' : 'Missing',
+        refreshTokenValue: refreshToken,
         nextSteps: [
           'Your webhook is now ready to receive requests',
           'Test the webhook endpoint: POST /webhook/feedback',
-          'Check health: GET /health'
+          'Check health: GET /health',
+          'Persist the refresh token by setting the JIRA_REFRESH_TOKEN environment variable'
         ]
       }
     });
@@ -248,26 +262,55 @@ app.post('/webhook/feedback', async (req, res) => {
 
 // Ensure we have a valid OAuth token
 async function ensureValidToken() {
-  if (!accessToken || !tokenExpiresAt || Date.now() >= tokenExpiresAt) {
-    console.log('🔄 Getting fresh OAuth token...');
-    
-    if (!config.authCode) {
-      throw new Error('No authorization code found. Please complete OAuth setup first. Visit /auth/setup for instructions.');
-    }
-    
-    const tokenData = await getAccessToken(
+  const needsRefresh =
+    !accessToken ||
+    !tokenExpiresAt ||
+    Date.now() >= tokenExpiresAt - 60000; // refresh 1 minute before expiry
+
+  if (!needsRefresh) {
+    return;
+  }
+
+  console.log('🔄 Getting fresh OAuth token...');
+
+  const refreshTokenToUse = refreshToken || config.refreshToken;
+
+  if (refreshTokenToUse) {
+    const tokenData = await refreshAccessToken(
       config.clientId,
       config.clientSecret,
-      config.redirectUri,
-      config.authCode
+      refreshTokenToUse
     );
-    
+
     accessToken = tokenData.access_token;
-    refreshToken = tokenData.refresh_token;
-    tokenExpiresAt = Date.now() + (tokenData.expires_in * 1000);
-    
-    console.log('✅ OAuth token obtained successfully');
+    refreshToken = tokenData.refresh_token || refreshTokenToUse;
+    config.refreshToken = refreshToken;
+    tokenExpiresAt = Date.now() + tokenData.expires_in * 1000;
+
+    console.log('✅ OAuth token refreshed successfully');
+    return;
   }
+
+  if (!config.authCode || authCodeUsed) {
+    throw new Error(
+      'No authorization or refresh token found. Complete OAuth setup via /auth/setup and configure JIRA_REFRESH_TOKEN.'
+    );
+  }
+
+  const tokenData = await getAccessTokenWithAuthCode(
+    config.clientId,
+    config.clientSecret,
+    config.redirectUri,
+    config.authCode
+  );
+
+  accessToken = tokenData.access_token;
+  refreshToken = tokenData.refresh_token;
+  config.refreshToken = refreshToken;
+  tokenExpiresAt = Date.now() + tokenData.expires_in * 1000;
+  authCodeUsed = true;
+
+  console.log('✅ OAuth token obtained successfully using authorization code');
 }
 
 // Get JIRA cloud ID
@@ -306,11 +349,16 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('🚀 Customer Feedback to Polaris Webhook Service started');
   console.log(`📍 Server running on port ${PORT}`);
+  if (renderExternalUrl) {
+    console.log(`🌐 External URL: ${renderExternalUrl}`);
+  }
   console.log(`🔗 Webhook endpoint: http://localhost:${PORT}/webhook/feedback`);
   console.log(`🏥 Health check: http://localhost:${PORT}/health`);
   console.log(`🔐 Auth setup: http://localhost:${PORT}/auth/setup`);
   
-  if (!config.authCode) {
+  if (!config.refreshToken && !config.authCode) {
     console.log('⚠️  OAuth setup required. Visit /auth/setup for instructions.');
+  } else if (!config.refreshToken) {
+    console.log('⚠️  Configure JIRA_REFRESH_TOKEN with the refresh token obtained from /auth/setup.');
   }
 });
