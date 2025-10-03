@@ -45,19 +45,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({ 
-    message: 'Customer Feedback to Polaris Webhook Service',
-    version: '1.0.0',
-    endpoints: {
-      webhook: '/webhook/feedback',
-      health: '/health',
-      auth: '/auth/setup'
-    },
-    status: 'running'
-  });
-});
 
 // Auth setup endpoint - helps with OAuth flow
 app.get('/auth/setup', (req, res) => {
@@ -68,11 +55,80 @@ app.get('/auth/setup', (req, res) => {
     authUrl: authUrl,
     instructions: [
       '1. Click the authUrl above to authorize the app',
-      '2. Copy the authorization code from the redirect URL',
-      '3. Set JIRA_AUTH_CODE environment variable with the code',
-      '4. Restart the service'
+      '2. The authorization code will be automatically processed',
+      '3. Check the server logs for success/error messages'
     ]
   });
+});
+
+// OAuth callback handler - receives authorization code from JIRA
+app.get('/', async (req, res) => {
+  const { code, error } = req.query;
+  
+  if (error) {
+    console.error('❌ OAuth error:', error);
+    return res.status(400).json({
+      success: false,
+      error: `OAuth error: ${error}`,
+      message: 'Please try the authorization flow again'
+    });
+  }
+  
+  if (!code) {
+    return res.json({
+      message: 'Customer Feedback to Polaris Webhook Service',
+      version: '1.0.1',
+      endpoints: {
+        webhook: '/webhook/feedback',
+        health: '/health',
+        auth: '/auth/setup'
+      },
+      status: 'running',
+      oauthCallback: 'Ready to receive authorization codes'
+    });
+  }
+  
+  try {
+    console.log('🔄 Processing authorization code...');
+    
+    // Exchange authorization code for access token
+    const tokenData = await getAccessToken(
+      config.clientId,
+      config.clientSecret,
+      config.redirectUri,
+      code
+    );
+    
+    // Store tokens
+    accessToken = tokenData.access_token;
+    refreshToken = tokenData.refresh_token;
+    tokenExpiresAt = Date.now() + (tokenData.expires_in * 1000);
+    
+    console.log('✅ OAuth setup completed successfully!');
+    console.log('🔑 Access token obtained');
+    
+    res.json({
+      success: true,
+      message: 'OAuth setup completed successfully!',
+      details: {
+        accessToken: accessToken ? 'Obtained' : 'Failed',
+        expiresAt: new Date(tokenExpiresAt).toISOString(),
+        nextSteps: [
+          'Your webhook is now ready to receive requests',
+          'Test the webhook endpoint: POST /webhook/feedback',
+          'Check health: GET /health'
+        ]
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error processing authorization code:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Failed to process authorization code. Please try again.'
+    });
+  }
 });
 
 // Main webhook endpoint for Zapier
