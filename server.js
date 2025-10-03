@@ -61,31 +61,37 @@ app.get('/auth/setup', (req, res) => {
   });
 });
 
-// OAuth callback handler - receives authorization code from JIRA
+// OAuth callback handler - receives authorization code from JIRA (like push example)
 app.get('/', async (req, res) => {
   const { code, error } = req.query;
   
   if (error) {
     console.error('❌ OAuth error:', error);
-    return res.status(400).json({
-      success: false,
-      error: `OAuth error: ${error}`,
-      message: 'Please try the authorization flow again'
-    });
+    res.writeHead(400, { 'Content-Type': 'text/html' });
+    return res.end(`
+      <meta charset="UTF-8" />
+      <h3 style="margin: 40px auto; text-align: center; color: red;">
+        OAuth Error: ${error}
+      </h3>
+      <p style="text-align: center;">
+        <a href="/auth/setup">Try again</a>
+      </p>
+    `);
   }
   
   if (!code) {
-    return res.json({
-      message: 'Customer Feedback to Polaris Webhook Service',
-      version: '1.0.1',
-      endpoints: {
-        webhook: '/webhook/feedback',
-        health: '/health',
-        auth: '/auth/setup'
-      },
-      status: 'running',
-      oauthCallback: 'Ready to receive authorization codes'
-    });
+    // Show service info when no code is provided
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    return res.end(`
+      <meta charset="UTF-8" />
+      <h3 style="margin: 40px auto; text-align: center;">
+        Customer Feedback to Polaris Webhook Service
+      </h3>
+      <p style="text-align: center;">
+        <a href="/auth/setup">Setup OAuth</a> | 
+        <a href="/health">Health Check</a>
+      </p>
+    `);
   }
   
   try {
@@ -107,27 +113,37 @@ app.get('/', async (req, res) => {
     console.log('✅ OAuth setup completed successfully!');
     console.log('🔑 Access token obtained');
     
-    res.json({
-      success: true,
-      message: 'OAuth setup completed successfully!',
-      details: {
-        accessToken: accessToken ? 'Obtained' : 'Failed',
-        expiresAt: new Date(tokenExpiresAt).toISOString(),
-        nextSteps: [
-          'Your webhook is now ready to receive requests',
-          'Test the webhook endpoint: POST /webhook/feedback',
-          'Check health: GET /health'
-        ]
-      }
-    });
+    // Display success message like push example
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`
+      <meta charset="UTF-8" />
+      <h3 style="margin: 40px auto; text-align: center; color: green;">
+        OAuth Setup Complete! 🥳
+      </h3>
+      <p style="text-align: center;">
+        Your webhook is now ready to receive requests from Zapier.
+      </p>
+      <p style="text-align: center;">
+        <a href="/health">Check Health</a> | 
+        <a href="/webhook/feedback">Test Webhook</a>
+      </p>
+    `);
     
   } catch (error) {
     console.error('❌ Error processing authorization code:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      message: 'Failed to process authorization code. Please try again.'
-    });
+    res.writeHead(500, { 'Content-Type': 'text/html' });
+    res.end(`
+      <meta charset="UTF-8" />
+      <h3 style="margin: 40px auto; text-align: center; color: red;">
+        OAuth Setup Failed
+      </h3>
+      <p style="text-align: center;">
+        Error: ${error.message}
+      </p>
+      <p style="text-align: center;">
+        <a href="/auth/setup">Try again</a>
+      </p>
+    `);
   }
 });
 
